@@ -580,18 +580,33 @@ public class ContainerLifecycleManager {
      * and do nothing, the volume analogue of start treating an HTTP 304 as success.
      */
     public void ensureVolume(String volumeName) {
-        createVolumeIfAbsent(volumeName);
+        createVolumeIfAbsent(volumeName, ContainerStorageHelper.defaultLabels(config));
+    }
+
+    /**
+     * {@link #ensureVolume} for a volume an operator named, created when absent without any
+     * Floci label, the umbrella and extra ones alike. The operator named the volume, so its
+     * lifecycle is theirs: nothing that sweeps Floci-labelled volumes may collect it, neither
+     * a floci-scoped {@code docker volume prune} nor a testcontainers module reaping a run's
+     * labelled child resources through labels injected into {@code floci.docker.extra-labels}.
+     */
+    public void ensureUnmanagedVolume(String volumeName) {
+        if (volumeExists(volumeName)) {
+            return;
+        }
+        dockerClient.createVolumeCmd()
+                .withName(volumeName)
+                // An explicit empty map, never mergedLabels: the operator-named volume
+                // carries no Floci label, so no label-based sweep collects it.
+                .withLabels(Map.of())
+                .exec();
+        LOG.debugv("Created unmanaged volume {0}", volumeName);
     }
 
     /** Creates a volume with resource ownership labels for recoverable cleanup. */
     public void ensureVolume(String volumeName, Map<String, String> labels) {
         createVolumeIfAbsent(volumeName, labels);
     }
-
-    private boolean createVolumeIfAbsent(String volumeName) {
-        return createVolumeIfAbsent(volumeName, Map.of());
-    }
-
     /** Creates the named volume when it is missing; returns whether it was created. */
     private boolean createVolumeIfAbsent(String volumeName, Map<String, String> labels) {
         if (volumeExists(volumeName)) {
@@ -642,7 +657,7 @@ public class ContainerLifecycleManager {
                                    Optional<String> rootPermissions, String initImage) {
         // A volume created now is root:root 0755 again, so a memo left by a volume of the same name
         // that was removed since (e.g. DeleteApplication, docker volume rm) is stale.
-        if (createVolumeIfAbsent(volumeName)) {
+        if (createVolumeIfAbsent(volumeName, ContainerStorageHelper.defaultLabels(config))) {
             initializedSharedVolumes.remove(volumeName);
         }
         if (rootPermissions.isEmpty() && ownerUid.isEmpty() && ownerGid.isEmpty()) {

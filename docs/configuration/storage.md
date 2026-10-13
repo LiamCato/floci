@@ -194,6 +194,29 @@ By default volumes survive resource deletion, matching real AWS behavior.
 FLOCI_STORAGE_PRUNE_VOLUMES_ON_DELETE=true
 ```
 
+### OpenSearch data volume override
+
+`FLOCI_SERVICES_OPENSEARCH_DATA_VOLUME` replaces the derived per-domain volume for
+OpenSearch domains. An absolute path bind-mounts `<path>/<domain-name>`; any other value
+is a Docker volume name and each domain gets its own `<name>-<domain-name>` volume of it,
+so no two domains ever share a data directory. When `FLOCI_DOCKER_RESOURCE_NAMESPACE` is
+set, the namespace is inserted into both forms, a `<namespace>` subdirectory for the
+bind path and a `<name>-<namespace>-<domain-name>` segment order for the volume, so two
+namespaced deployments sharing one Docker daemon never converge on one data directory
+through the same configured base either. Storage named through this variable is
+never removed on domain delete, regardless of storage mode and prune policy: the operator
+named it, so its lifecycle is theirs. A volume Floci creates when absent carries no Floci
+label, so neither a floci-scoped `docker volume prune --filter label=floci=true` nor a
+sweep of Floci-labelled child resources, a testcontainers module reaping a run's labelled
+children, removes it.
+
+```bash
+FLOCI_SERVICES_OPENSEARCH_DATA_VOLUME=opensearch-data        # Docker volume per domain: opensearch-data-<domain>
+FLOCI_SERVICES_OPENSEARCH_DATA_VOLUME=/srv/floci/opensearch  # bind mount per domain: /srv/floci/opensearch/<domain>
+# with FLOCI_DOCKER_RESOURCE_NAMESPACE=team-a, the two above become
+# opensearch-data-team-a-<domain> and /srv/floci/opensearch/team-a/<domain>
+```
+
 ### Host-path mode (advanced)
 
 Set `FLOCI_STORAGE_HOST_PERSISTENT_PATH` to an **absolute host path** to use bind mounts instead

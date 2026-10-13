@@ -22,6 +22,7 @@ import io.github.hectorvent.floci.services.lambda.launcher.ImageCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -565,6 +566,58 @@ class ContainerLifecycleManagerVolumeTest {
 
         assertEquals(1, inspects.get());
         assertEquals(1, creates.get(), "a missing volume must be created");
+    }
+
+    /** A Floci-derived volume carries the labels a floci-scoped prune and sweep filter on. */
+    @Test
+    void ensureVolume_labelsCreatedVolumeAsFlociManaged() {
+        inspectVolumeBehaving(attempt -> {
+            throw new NotFoundException("No such volume: vol");
+        });
+        CreateVolumeCmd cmd = mock(CreateVolumeCmd.class, RETURNS_SELF);
+        when(dockerClient.createVolumeCmd()).thenReturn(cmd);
+        when(cmd.exec()).thenReturn(mock(CreateVolumeResponse.class));
+        ArgumentCaptor<Map<String, String>> labels = ArgumentCaptor.forClass(Map.class);
+
+        manager.ensureVolume("vol");
+
+        verify(cmd).withLabels(labels.capture());
+        assertEquals(Map.of("floci", "true", "floci_emulator", "floci-aws"), labels.getValue());
+    }
+
+    /**
+     * A volume an operator named is created without any Floci label: no sweep of
+     * Floci-labelled volumes, a floci-scoped prune or a testcontainers run's
+     * labelled-children reap, may collect operator storage.
+     */
+    @Test
+    void ensureUnmanagedVolume_createsMissingVolumeWithoutLabels() {
+        AtomicInteger inspects = inspectVolumeBehaving(attempt -> {
+            throw new NotFoundException("No such volume: vol");
+        });
+        CreateVolumeCmd cmd = mock(CreateVolumeCmd.class, RETURNS_SELF);
+        when(dockerClient.createVolumeCmd()).thenReturn(cmd);
+        when(cmd.exec()).thenReturn(mock(CreateVolumeResponse.class));
+        ArgumentCaptor<Map<String, String>> labels = ArgumentCaptor.forClass(Map.class);
+
+        manager.ensureUnmanagedVolume("vol");
+
+        assertEquals(1, inspects.get());
+        verify(cmd).withLabels(labels.capture());
+        assertTrue(labels.getValue().isEmpty(),
+                "an operator-named volume carries no label a Floci sweep filters on");
+    }
+
+    /** An existing operator-named volume is left exactly as the operator created it. */
+    @Test
+    void ensureUnmanagedVolume_doesNotCreateWhenVolumeAlreadyExists() {
+        AtomicInteger inspects = inspectVolumeBehaving(attempt ->
+                mock(InspectVolumeResponse.class));
+
+        manager.ensureUnmanagedVolume("vol");
+
+        assertEquals(1, inspects.get());
+        verify(dockerClient, never()).createVolumeCmd();
     }
 
     @Test

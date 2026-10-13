@@ -446,6 +446,7 @@ These services spawn Docker containers. They require access to the Docker socket
 | `FLOCI_SERVICES_OPENSEARCH_ENABLED` | `true` | Enable the OpenSearch service |
 | `FLOCI_SERVICES_OPENSEARCH_MOCK` | `false` | When `true`, domains are created instantly without a real container (API only) |
 | `FLOCI_SERVICES_OPENSEARCH_DEFAULT_IMAGE` | *(unset)* | Optional fixed Docker image for every OpenSearch domain; when unset, images resolve per requested `EngineVersion` |
+| `FLOCI_SERVICES_OPENSEARCH_DATA_VOLUME` | *(unset)* | Data volume for domain containers: an absolute path bind-mounts `<path>/<domain-name>` (nested under a `<namespace>` subdirectory when `FLOCI_DOCKER_RESOURCE_NAMESPACE` is set); any other value is a Docker volume name and each domain gets its own `<name>-<domain-name>` volume of it (`<name>-<namespace>-<domain-name>` when a resource namespace is set). Never removed on domain delete; created without Floci labels when absent, so floci-scoped volume prunes and label-sweeps leave it alone |
 | `FLOCI_SERVICES_OPENSEARCH_PROXY_BASE_PORT` | `9400` | First port in the OpenSearch proxy range |
 | `FLOCI_SERVICES_OPENSEARCH_PROXY_MAX_PORT` | `9499` | Last port in the OpenSearch proxy range |
 | `FLOCI_SERVICES_OPENSEARCH_KEEP_RUNNING_ON_SHUTDOWN` | `false` | Keep OpenSearch containers running when Floci stops |
