@@ -10,8 +10,8 @@ import io.quarkus.runtime.annotations.RegisterForReflection;
  * name an operator picked through {@code floci.services.opensearch.data-volume} can
  * be spelled exactly like one Floci derives.
  *
- * <p>Null on records written before this field existed, whose deletion falls back to
- * inferring ownership from the persisted volume name.</p>
+ * <p>Null on records written before this field existed, which predate configured data volumes
+ * and therefore always have Floci-managed storage.</p>
  */
 @RegisterForReflection
 public enum VolumeOwnership {

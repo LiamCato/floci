@@ -84,7 +84,7 @@ public class Domain {
 
     /**
      * Who owns the storage the domain's container mounts; null on records written before
-     * this field existed, whose deletion infers ownership from the volume name.
+     * this field existed, whose volumes are always Floci-managed.
      */
     @JsonProperty("VolumeOwnership")
     private VolumeOwnership volumeOwnership;

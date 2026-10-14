@@ -20,6 +20,7 @@ import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.api.model.Mount;
 import com.github.dockerjava.api.model.MountType;
 import com.github.dockerjava.api.model.Ports;
+import com.github.dockerjava.api.model.Volume;
 import com.github.dockerjava.core.command.WaitContainerResultCallback;
 import io.github.hectorvent.floci.config.ContainerCaBundle;
 import io.github.hectorvent.floci.config.EmulatorConfig;
@@ -712,11 +713,37 @@ public class ContainerLifecycleManager {
 
         HostConfig hostConfig = HostConfig.newHostConfig().withMounts(List.of(
                 new Mount().withType(MountType.VOLUME).withSource(volumeName).withTarget(mount)));
-        CreateContainerResponse created = dockerClient.createContainerCmd(image)
+        CreateContainerCmd command = dockerClient.createContainerCmd(image)
                 .withHostConfig(hostConfig)
-                .withCmd("sh", "-c", script.toString())
-                .withLabels(ContainerStorageHelper.defaultLabels(config))
-                .exec();
+                .withCmd("sh", "-c", script.toString());
+        runStorageInitHelper(command, "shared volume " + volumeName);
+        LOG.infov("Initialised shared volume {0} root (cmd: {1})", volumeName, script);
+    }
+
+    /**
+     * Makes a bind directory writable by the owner of the image's data directory. The
+     * helper runs on the Docker daemon's host, using the workload image so custom image
+     * ownership is respected. Only the mount root is changed; existing files are untouched.
+     * Unlike shared-volume initialisation, failure propagates and every launch checks the root.
+     */
+    public void ensureBindDirectory(String hostPath, String image, String imageDataPath) {
+        imageCacheService.ensureImageExists(image);
+        String mount = "/floci-bind-directory";
+        String script = "ownership=$(stat -c '%u:%g' \"$1\") && "
+                + "chown \"$ownership\" \"$2\" && chmod u+rwx \"$2\"";
+        HostConfig hostConfig = HostConfig.newHostConfig()
+                .withBinds(new Bind(hostPath, new Volume(mount)));
+        CreateContainerCmd command = dockerClient.createContainerCmd(image)
+                .withHostConfig(hostConfig)
+                .withUser("0")
+                .withEntrypoint("sh")
+                .withCmd("-c", script, "floci-bind-init", imageDataPath, mount);
+        runStorageInitHelper(command, "bind directory " + hostPath);
+        LOG.infov("Initialised bind directory {0} using ownership from {1}:{2}", hostPath, image, imageDataPath);
+    }
+
+    private void runStorageInitHelper(CreateContainerCmd command, String description) {
+        CreateContainerResponse created = command.withLabels(ContainerStorageHelper.defaultLabels(config)).exec();
         String helperId = created.getId();
         try {
             startContainer(helperId);
@@ -724,17 +751,14 @@ public class ContainerLifecycleManager {
                     .exec(new WaitContainerResultCallback())
                     .awaitStatusCode(60, TimeUnit.SECONDS);
             if (status == null || status != 0) {
-                // Throw so the caller leaves the volume unmemoised and retries on the next launch,
-                // rather than leaving it root:root 0755 with no further attempt.
-                throw new IllegalStateException("shared-volume init for " + volumeName
-                        + " exited with status " + status + " (cmd: " + script + ")");
+                throw new IllegalStateException("Storage init for " + description + " exited with status " + status);
             }
-            LOG.infov("Initialised shared volume {0} root (cmd: {1})", volumeName, script);
         } finally {
             try {
                 dockerClient.removeContainerCmd(helperId).withForce(true).exec();
-            } catch (Exception ignore) {
-                // best-effort cleanup of the one-off helper
+            } catch (Exception e) {
+                LOG.warnv("Failed to remove storage init helper {0} for {1}: {2}",
+                        helperId, description, e.getMessage());
             }
         }
     }

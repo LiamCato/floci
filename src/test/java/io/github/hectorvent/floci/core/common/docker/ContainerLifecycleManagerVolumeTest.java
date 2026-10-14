@@ -16,6 +16,7 @@ import com.github.dockerjava.api.command.StopContainerCmd;
 import com.github.dockerjava.api.command.WaitContainerCmd;
 import com.github.dockerjava.api.exception.DockerException;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.model.HostConfig;
 import com.github.dockerjava.core.command.WaitContainerResultCallback;
 import io.github.hectorvent.floci.config.EmulatorConfig;
 import io.github.hectorvent.floci.services.lambda.launcher.ImageCacheService;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
@@ -709,5 +711,62 @@ class ContainerLifecycleManagerVolumeTest {
 
         verify(spyManager).startContainer("helper-id");
         verify(dockerClient, never()).startContainerCmd("helper-id");
+    }
+
+    @Test
+    void ensureBindDirectoryRunsRootHelperUsingImageOwnershipAndCleansUp() {
+        CreateContainerCmd command = bindInitHelper(0);
+        ArgumentCaptor<HostConfig> hostConfig = ArgumentCaptor.forClass(HostConfig.class);
+
+        manager.ensureBindDirectory("/host/domain", "custom-opensearch", "/usr/share/opensearch/data");
+
+        verify(imageCacheService).ensureImageExists("custom-opensearch");
+        verify(command).withHostConfig(hostConfig.capture());
+        assertEquals("/host/domain", hostConfig.getValue().getBinds()[0].getPath());
+        assertEquals("/floci-bind-directory", hostConfig.getValue().getBinds()[0].getVolume().getPath());
+        verify(command).withUser("0");
+        verify(command).withEntrypoint("sh");
+        verify(command).withCmd("-c", "ownership=$(stat -c '%u:%g' \"$1\") && "
+                + "chown \"$ownership\" \"$2\" && chmod u+rwx \"$2\"",
+                "floci-bind-init", "/usr/share/opensearch/data", "/floci-bind-directory");
+        verify(dockerClient).startContainerCmd("helper-id");
+        verify(dockerClient).removeContainerCmd("helper-id");
+    }
+
+    @Test
+    void ensureBindDirectoryPropagatesFailedInitAndStillRemovesHelper() {
+        bindInitHelper(1);
+
+        IllegalStateException exception = assertThrows(IllegalStateException.class, () ->
+                manager.ensureBindDirectory("/host/domain", "custom-opensearch", "/usr/share/opensearch/data"));
+
+        assertTrue(exception.getMessage().contains("exited with status 1"));
+        verify(dockerClient).removeContainerCmd("helper-id");
+    }
+
+    @Test
+    void ensureBindDirectoryRechecksDirectoryOnEveryLaunch() {
+        bindInitHelper(0);
+
+        manager.ensureBindDirectory("/host/domain", "custom-opensearch", "/usr/share/opensearch/data");
+        manager.ensureBindDirectory("/host/domain", "custom-opensearch", "/usr/share/opensearch/data");
+
+        verify(dockerClient, times(2)).createContainerCmd("custom-opensearch");
+    }
+
+    private CreateContainerCmd bindInitHelper(int status) {
+        CreateContainerCmd command = mock(CreateContainerCmd.class, RETURNS_SELF);
+        when(dockerClient.createContainerCmd("custom-opensearch")).thenReturn(command);
+        CreateContainerResponse response = mock(CreateContainerResponse.class);
+        when(response.getId()).thenReturn("helper-id");
+        when(command.exec()).thenReturn(response);
+        when(dockerClient.startContainerCmd("helper-id")).thenReturn(mock(StartContainerCmd.class));
+        WaitContainerCmd wait = mock(WaitContainerCmd.class);
+        when(dockerClient.waitContainerCmd("helper-id")).thenReturn(wait);
+        WaitContainerResultCallback callback = mock(WaitContainerResultCallback.class);
+        when(wait.exec(any(WaitContainerResultCallback.class))).thenReturn(callback);
+        when(callback.awaitStatusCode(60, TimeUnit.SECONDS)).thenReturn(status);
+        when(dockerClient.removeContainerCmd("helper-id")).thenReturn(mock(RemoveContainerCmd.class, RETURNS_SELF));
+        return command;
     }
 }
